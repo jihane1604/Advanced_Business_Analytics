@@ -1,17 +1,24 @@
-name: aba-env
+name: aba-env-2
 channels:
-  - defaults
   - conda-forge
+  - defaults
 dependencies:
-  - python=3.10
-  - numpy
-  - pandas
-  - scikit-learn
-  - joblib
-  - jupyter
-  - notebook
-  - matplotlib
-  - seaborn
+  - python=3.11
   - pip
+  - numpy=1.26.4
+  - pandas=2.2.*
+  - scipy=1.11.*
+  - scikit-learn=1.4.*
+  - imbalanced-learn=0.12.*
+  - xgboost=2.1.*
+  - matplotlib=3.8.*
+  - seaborn=0.13.*
+  - joblib=1.4.*
+  - jupyterlab=4.2.*
+  - ipykernel=6.29.*
+  - pyzmq=26.2.*
+  - tornado=6.4.*
+  - traitlets=5.14.*
   - pip:
-    - -r ../requirements.txt
+      - pycaret==3.3.2
+      - shap==0.46.0
