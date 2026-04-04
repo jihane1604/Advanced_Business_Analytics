@@ -13,6 +13,21 @@ from sklearn.pipeline import Pipeline
 
 from preprocessing import DROP_ALWAYS, HotelBookingPreprocessor
 
+MONTH_TO_NUM = {
+    "January": 1,
+    "February": 2,
+    "March": 3,
+    "April": 4,
+    "May": 5,
+    "June": 6,
+    "July": 7,
+    "August": 8,
+    "September": 9,
+    "October": 10,
+    "November": 11,
+    "December": 12,
+}
+
 
 class ModelInputTransformer(BaseEstimator, TransformerMixin):
     """
@@ -69,6 +84,99 @@ def _resolve_path(path_str: str, base_dir: Path) -> Path:
     if p.exists():
         return p.resolve()
     return (base_dir / p).resolve()
+
+
+def _normalize_display_fields(
+    df: pd.DataFrame, normalize_arrival_date: bool = True, normalize_company: bool = True
+) -> pd.DataFrame:
+    out = df.copy()
+
+    if normalize_arrival_date and "arrival_date" in out.columns:
+        # Use date components when available to avoid locale/ambiguity issues.
+        if {
+            "arrival_date_year",
+            "arrival_date_month",
+            "arrival_date_day_of_month",
+        }.issubset(out.columns):
+            month_num = (
+                out["arrival_date_month"]
+                .astype("string")
+                .str.strip()
+                .map(MONTH_TO_NUM)
+            )
+            date_from_parts = pd.to_datetime(
+                dict(
+                    year=pd.to_numeric(out["arrival_date_year"], errors="coerce"),
+                    month=pd.to_numeric(month_num, errors="coerce"),
+                    day=pd.to_numeric(out["arrival_date_day_of_month"], errors="coerce"),
+                ),
+                errors="coerce",
+            )
+            fallback = pd.to_datetime(out["arrival_date"], errors="coerce", dayfirst=True)
+            parsed = date_from_parts.fillna(fallback)
+            out["arrival_date"] = parsed.dt.strftime("%d/%m/%Y").fillna("")
+        else:
+            parsed = pd.to_datetime(out["arrival_date"], errors="coerce", dayfirst=True)
+            out["arrival_date"] = parsed.dt.strftime("%d/%m/%Y").fillna("")
+
+    if normalize_company and "company" in out.columns:
+        out["company"] = (
+            out["company"]
+            .astype("string")
+            .str.strip()
+            .replace(["", "nan", "NaN", "<NA>", "NoneType"], pd.NA)
+            .fillna("None")
+            .astype(str)
+        )
+
+    return out
+
+
+def _drop_artifact_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    tracking_cols = {
+        "predicted_by_model",
+        "is_canceled_pred",
+        "pred_proba",
+        "threshold_used",
+        "feature_set_used",
+        "company",
+    }
+    core_cols = [c for c in df.columns if c not in tracking_cols]
+    if not core_cols:
+        return df
+
+    core_non_empty = (
+        df[core_cols]
+        .astype("string")
+        .apply(lambda s: s.str.strip().replace("<NA>", ""))
+        .ne("")
+        .sum(axis=1)
+    )
+    only_empty_core = core_non_empty == 0
+
+    company_none = pd.Series(True, index=df.index)
+    if "company" in df.columns:
+        company_none = df["company"].astype("string").str.strip().isin(
+            ["None", "", "nan", "NaN", "<NA>"]
+        )
+
+    pred_false = pd.Series(True, index=df.index)
+    if "predicted_by_model" in df.columns:
+        pred_false = (
+            df["predicted_by_model"]
+            .astype("string")
+            .str.strip()
+            .str.lower()
+            .isin(["false", "0", "", "nan", "<na>"])
+        )
+
+    mask_artifact = only_empty_core & company_none & pred_false
+    if mask_artifact.any():
+        return df.loc[~mask_artifact].copy()
+    return df
 
 
 def build_scoring_pipeline(
@@ -169,6 +277,13 @@ def append_to_historical(historical_csv: Path, new_rows: pd.DataFrame) -> tuple[
         historical = pd.read_csv(historical_csv)
     else:
         historical = pd.DataFrame()
+
+    # Normalize historical display fields too, so arrival_date stays consistent dd/mm/yyyy.
+    historical = _normalize_display_fields(
+        historical, normalize_arrival_date=True, normalize_company=True
+    )
+    historical = _drop_artifact_rows(historical)
+    new_rows = _normalize_display_fields(new_rows)
 
     historical = _ensure_tracking_cols(historical, is_historical=True)
     new_rows = _ensure_tracking_cols(new_rows, is_historical=False)
@@ -311,7 +426,7 @@ def main() -> None:
     proba = model.predict_proba(X_scored)[:, 1]
     pred = (proba >= threshold).astype(int)
 
-    output = live_engineered.copy()
+    output = _normalize_display_fields(live_engineered.copy())
     output["is_canceled_pred"] = pred
     output["pred_proba"] = proba
     output["predicted_by_model"] = True
