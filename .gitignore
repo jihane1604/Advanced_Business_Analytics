@@ -3,5 +3,5 @@ data/
 *_visuals/
 models/
 *.log
-
+create_live_scoring_test_samples.ipynb
 __pycache__/

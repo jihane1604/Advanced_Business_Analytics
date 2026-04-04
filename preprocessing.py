@@ -43,8 +43,25 @@ MONTH_TO_NUM = {
     "December": 12,
 }
 
+# Columns dropped in feature_selection/model_development before encoding.
+DROP_ALWAYS = [
+    "reservation_status",       # leakage
+    "reservation_status_date",  # leakage
+    "arrival_date",             # redundant with year/month/day
+    "arrival_weekday",          # redundant with is_weekend_arrival
+    "lead_time_bucket",         # categorical bin of lead_time, keep original
+    "country",                  # high cardinality, continent used instead
+    "country_code_iso3",        # redundant with continent
+    "agent",                    # ID column, high cardinality
+    "company",                  # ID column, high cardinality
+]
 
-def _normalize_country_lookup(country_lookup: pd.DataFrame) -> pd.DataFrame:
+
+def _normalize_country_lookup(
+    country_lookup: Union[pd.DataFrame, str, Path]
+) -> pd.DataFrame:
+    if isinstance(country_lookup, (str, Path)):
+        country_lookup = pd.read_csv(country_lookup)
     if "country_code" in country_lookup.columns:
         return country_lookup.rename(columns={"country_code": "country"}).copy()
     return country_lookup.copy()
@@ -52,8 +69,9 @@ def _normalize_country_lookup(country_lookup: pd.DataFrame) -> pd.DataFrame:
 
 def preprocess_new_data(
     df_raw: pd.DataFrame,
-    country_lookup: Optional[pd.DataFrame] = None,
+    country_lookup: Optional[Union[pd.DataFrame, str, Path]] = None,
     drop_duplicates: bool = True,
+    drop_model_cols: bool = False,
 ) -> pd.DataFrame:
     """Apply the same preprocessing logic used in EDA to new/raw data."""
     df_clean = df_raw.copy()
@@ -231,6 +249,11 @@ def preprocess_new_data(
     if drop_duplicates:
         df_clean = df_clean.drop_duplicates().reset_index(drop=True)
 
+    # Modeling behavior from feature_selection/model_development.
+    if drop_model_cols:
+        cols_to_drop = [c for c in DROP_ALWAYS if c in df_clean.columns]
+        df_clean = df_clean.drop(columns=cols_to_drop)
+
     return df_clean
 
 
@@ -240,6 +263,7 @@ class HotelBookingPreprocessor(BaseEstimator, TransformerMixin):
 
     country_lookup: Optional[Union[pd.DataFrame, str, Path]] = None
     drop_duplicates: bool = True
+    drop_model_cols: bool = False
 
     def fit(self, X, y=None):
         if isinstance(self.country_lookup, (str, Path)):
@@ -253,7 +277,10 @@ class HotelBookingPreprocessor(BaseEstimator, TransformerMixin):
             X = pd.DataFrame(X)
         lookup = getattr(self, "country_lookup_", self.country_lookup)
         return preprocess_new_data(
-            X, country_lookup=lookup, drop_duplicates=self.drop_duplicates
+            X,
+            country_lookup=lookup,
+            drop_duplicates=self.drop_duplicates,
+            drop_model_cols=self.drop_model_cols,
         )
 
 class ColumnSelector(BaseEstimator, TransformerMixin):
@@ -266,5 +293,3 @@ class ColumnSelector(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         return X[self.columns_].copy()
-
-
