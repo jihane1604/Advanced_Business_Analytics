@@ -1,7 +1,8 @@
 # data folder
-data/
+data/*
 *_visuals/
 models/
 *.log
 create_live_scoring_test_samples.ipynb
 __pycache__/
+!data/hotel_bookings_live_sample_300.csv
